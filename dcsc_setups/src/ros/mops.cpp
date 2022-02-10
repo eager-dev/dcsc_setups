@@ -8,6 +8,7 @@ using namespace std;
 #include "std_msgs/String.h"
 #include <string.h>
 #include <math.h>
+#include <signal.h>
 
 FUGIMops mops(0);
 
@@ -63,11 +64,23 @@ bool read(dcsc_setups::MopsRead::Request &req, dcsc_setups::MopsRead::Response &
   return true;
 }
 
+void mySigintHandler(int sig)
+{
+      // Do some custom action.
+      // For example, publish a stop message to some other nodes.
+
+      // All the default sigint handler does is call shutdown()
+     ros::shutdown();
+}
+
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "mops");
+  ros::init(argc, argv, "mops", ros::init_options::NoSigintHandler);
   ros::NodeHandle n("~");
+
+  // Override the default ros sigint handler.
+  signal(SIGINT, mySigintHandler);
 
   bool initialized = false;
   unsigned int count = 0;
