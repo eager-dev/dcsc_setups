@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+    <node name="pendulum" pkg="dcsc_setups" type="pendulum" output="screen"/>
+</launch>

@@ -1,0 +1,8 @@
+Header header
+float64 relative_time
+float64 current
+float64 position0
+float64 position1
+float64 voltage_beam
+float64 voltage_pendulum
+uint8 digital_inputs

@@ -1,0 +1,4 @@
+dcsc_setups/PendulumActuators actuators
+---
+bool success
+string message

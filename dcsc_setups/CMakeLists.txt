@@ -24,6 +24,8 @@ add_message_files(
   FILES
   MopsSensors.msg
   MopsActuators.msg
+  PendulumSensors.msg
+  PendulumActuators.msg
 )
 
 # Generate services in the 'srv' folder
@@ -31,6 +33,8 @@ add_service_files(
   FILES
   MopsRead.srv
   MopsWrite.srv
+  PendulumRead.srv
+  PendulumWrite.srv
 )
 
 # Generate added messages and services with any dependencies listed here
@@ -70,3 +74,7 @@ include_directories(
 add_executable(mops src/ros/mops.cpp src/usb_utils.cpp)
 target_link_libraries(mops ${catkin_LIBRARIES} libusb-1.0.so)
 add_dependencies(mops dcsc_setups_gencpp)
+
+add_executable(pendulum src/ros/pendulum.cpp src/usb_utils.cpp)
+target_link_libraries(pendulum ${catkin_LIBRARIES} libusb-1.0.so)
+add_dependencies(pendulum dcsc_setups_gencpp)
