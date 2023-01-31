@@ -6,11 +6,79 @@ using namespace std;
 #include "dcsc_setups/usb_utils.h"
 #include "ros/ros.h"
 #include "std_msgs/String.h"
+#include "std_msgs/Float64.h"
 #include <string.h>
 #include <math.h>
+#include <cmath>
 #include <signal.h>
+#include <iostream>
+
 
 FUGIPendulum pendulum(0);
+dcsc_setups::PendulumSensors obs;
+float zero_voltage_beam;
+float zero_voltage_pendulum;
+float max_voltage_beam = 0.0;
+float max_voltage_pendulum = 0.0;
+float shift_beam = 0.0;
+float shift_pendulum = 0.0;
+float velocity_beam = 0.0;
+float velocity_pendulum = 0.0;
+float velocity_beam_filtered = 0.0;
+float velocity_pendulum_filtered = 0.0;
+float velocity_beam_old = 0.0;
+float velocity_pendulum_old = 0.0;
+float angle_beam_old = 0.0;
+float angle_pendulum_old = 0.0;
+float angle_beam = 0.0;
+float angle_pendulum = 0.0;
+float rate = 300.0;
+float cutoff_frequency = 200.0;
+
+
+float lowPassFilter(float velocity_old, float velocity, float dt, float RC)
+{
+  float alpha = dt / (RC + dt);
+  if (velocity - velocity_old > 80) {
+    return velocity_old;
+  }
+  if (velocity - velocity_old < -80) {
+    return velocity_old;
+  }
+  return alpha * velocity + (1 - alpha) * velocity_old;
+}
+
+
+float getAngle(float voltage, float zero_voltage, float max_voltage, float angle_old, float* shift)
+{
+  float angle = (voltage - zero_voltage) / (max_voltage) * 2 * M_PI + *shift;
+  if (angle - angle_old > M_PI) {
+    angle -= 2 * M_PI;
+    *shift -= 2 * M_PI;
+  }
+  if (angle - angle_old < -M_PI) {
+    angle += 2 * M_PI;
+    *shift += 2 * M_PI;
+  }
+  return angle;
+}
+
+
+float calculateVelocity(float angle, float angle_old, float time)
+{
+  float velocity = (angle - angle_old) / time;
+}
+
+
+void calculateVelocities(float angle_beam, float angle_pendulum, float time)
+{
+  velocity_beam = calculateVelocity(angle_beam, angle_beam_old, time);
+  velocity_pendulum = calculateVelocity(angle_pendulum, angle_pendulum_old, time);
+  angle_beam_old = angle_beam;
+  angle_pendulum_old = angle_pendulum;
+  velocity_beam_filtered = lowPassFilter(velocity_beam_old, velocity_beam, time, 1 / (2 * M_PI * cutoff_frequency));
+  velocity_pendulum_filtered = lowPassFilter(velocity_pendulum_old, velocity_pendulum, time, 1 / (2 * M_PI * cutoff_frequency));
+}
 
 
 bool init()
@@ -54,16 +122,31 @@ bool read(dcsc_setups::PendulumRead::Request &req, dcsc_setups::PendulumRead::Re
     res.message = ("Reading failed with status [%s], I/O error [%s]", strerror(status), strerror(pendulum.read_error()));
     return true;
   }
-  res.sensors.header.stamp = ros::Time::now();
-  res.sensors.relative_time = pendulum.sensors.relative_time;
-  res.sensors.current = pendulum.sensors.current;  
-  res.sensors.position0 = pendulum.sensors.position0;
-  res.sensors.position1 = pendulum.sensors.position1;
-  res.sensors.voltage_beam = pendulum.sensors.voltage_beam;
-  res.sensors.voltage_pendulum = pendulum.sensors.voltage_pendulum;
-  res.sensors.digital_inputs = pendulum.sensors.digital_inputs;
+  res.sensors = obs;
   return true;
 }
+
+
+void __read()
+{
+  int status;
+  if ((status = pendulum.read()) != EOK) {
+    ROS_ERROR("[pendulum] Reading failed with status [%s], I/O error [%s]", strerror(status), strerror(pendulum.read_error()));
+    return;
+  }
+  obs.voltage_beam = pendulum.sensors.voltage_beam;
+  obs.voltage_pendulum = pendulum.sensors.voltage_pendulum;
+  obs.digital_inputs = pendulum.sensors.digital_inputs;
+  obs.current = pendulum.sensors.current;
+  angle_beam = getAngle(obs.voltage_beam, zero_voltage_beam, max_voltage_beam, angle_beam_old, &shift_beam);
+  angle_pendulum = getAngle(obs.voltage_pendulum, zero_voltage_pendulum, max_voltage_pendulum, angle_pendulum_old, &shift_pendulum);
+  calculateVelocities(angle_beam, angle_pendulum, 1 / rate);
+  obs.angle_beam = angle_beam;
+  obs.angle_pendulum = angle_pendulum;
+  obs.velocity_beam = velocity_beam_filtered;
+  obs.velocity_pendulum = velocity_pendulum_filtered;
+}
+
 
 void mySigintHandler(int sig)
 {
@@ -79,12 +162,23 @@ int main(int argc, char **argv)
 {
   ros::init(argc, argv, "pendulum", ros::init_options::NoSigintHandler);
   ros::NodeHandle n("~");
+  n.getParam("rate", rate);
+  n.getParam("cutoff", cutoff_frequency);
+
+  ros::Publisher pendulum_vel_raw = n.advertise<std_msgs::Float64>("pendulum_vel_raw", 1);
+  ros::Publisher pendulum_vel_filtered = n.advertise<std_msgs::Float64>("pendulum_vel_filtered", 1);
+  ros::Publisher beam_vel_raw = n.advertise<std_msgs::Float64>("beam_vel_raw", 1);
+  ros::Publisher beam_vel_filtered = n.advertise<std_msgs::Float64>("beam_vel_filtered", 1);
+  
+  ros::Rate r(rate);
 
   // Override the default ros sigint handler.
   signal(SIGINT, mySigintHandler);
 
   bool initialized = false;
   unsigned int count = 0;
+  int status;
+
 
   while (!initialized)
   {
@@ -97,10 +191,78 @@ int main(int argc, char **argv)
     initialized = init();
   }
 
+  // Calibration
+  string strOut("[pendulum] Please move the pendulum downwards and press enter.");
+  cout << strOut << endl;
+  std::string input;
+  std::getline(std::cin, input);
+  do {
+     std::getline(std::cin, input);
+  } while (input.length() != 0);
+
+  // Read voltages
+  float voltage_beam;
+  float voltage_pendulum;
+
+  if ((status = pendulum.read()) != EOK) {
+    ROS_ERROR("[pendulum] Reading failed with status [%s], I/O error [%s]", strerror(status), strerror(pendulum.read_error()));
+  }
+  zero_voltage_beam = pendulum.sensors.voltage_beam;
+  zero_voltage_pendulum = pendulum.sensors.voltage_pendulum;
+
+  strOut = "[pendulum] Please rotate the inner and outer pendulum 360 degrees.";
+  ros::Time begin = ros::Time::now();
+  cout << strOut << endl;
+  bool done = false;
+
+  while (!done)
+  {
+    if ((ros::Time::now() - begin).toSec() > 10.0)
+    {
+      done = true;
+    }
+    if ((status = pendulum.read()) != EOK) {
+      ROS_ERROR("[pendulum] Reading failed with status [%s], I/O error [%s]", strerror(status), strerror(pendulum.read_error()));
+    }
+    voltage_beam = pendulum.sensors.voltage_beam;
+    voltage_pendulum = pendulum.sensors.voltage_pendulum;
+    if (voltage_beam > max_voltage_beam)
+    {
+      max_voltage_beam = voltage_beam;
+    }
+    if (voltage_pendulum > max_voltage_pendulum)
+    {
+      max_voltage_pendulum = voltage_pendulum;
+    }
+    r.sleep();
+  }
+
+  strOut = "[pendulum] Calibration finished.\n Beam: zero = " + to_string(zero_voltage_beam) + ", max = " + to_string(max_voltage_beam) + "\n  Pendulum: zero = " + to_string(zero_voltage_pendulum) + ", max = " + to_string(max_voltage_pendulum) + "\n";
+  cout << strOut << endl;
+
+  __read();
+
   ros::ServiceServer write_service = n.advertiseService("write", write);
   ros::ServiceServer read_service = n.advertiseService("read", read);
 
-  ros::spin();
+  while (ros::ok())
+  {
+    __read();
+    std_msgs::Float64 pendulum_vel_raw_msg;
+    std_msgs::Float64 pendulum_vel_filtered_msg;
+    std_msgs::Float64 beam_vel_raw_msg;
+    std_msgs::Float64 beam_vel_filtered_msg;
+    pendulum_vel_raw_msg.data = velocity_pendulum;
+    pendulum_vel_filtered_msg.data = velocity_pendulum_filtered;
+    beam_vel_raw_msg.data = velocity_beam;
+    beam_vel_filtered_msg.data = velocity_beam_filtered;
+    pendulum_vel_raw.publish(pendulum_vel_raw_msg);
+    pendulum_vel_filtered.publish(pendulum_vel_filtered_msg);
+    beam_vel_raw.publish(beam_vel_raw_msg);
+    beam_vel_filtered.publish(beam_vel_filtered_msg);
+    ros::spinOnce();
+    r.sleep();
+  }
 
   return 0;
 }

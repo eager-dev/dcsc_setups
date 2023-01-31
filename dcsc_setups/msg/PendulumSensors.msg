@@ -5,4 +5,8 @@ float64 position0
 float64 position1
 float64 voltage_beam
 float64 voltage_pendulum
+float64 angle_beam
+float64 angle_pendulum
+float64 velocity_beam
+float64 velocity_pendulum
 uint8 digital_inputs

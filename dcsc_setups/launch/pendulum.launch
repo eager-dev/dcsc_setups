@@ -1,4 +1,10 @@
 <?xml version="1.0"?>
+
 <launch>
-    <node name="pendulum" pkg="dcsc_setups" type="pendulum" output="screen"/>
+    <arg name="rate" default="300"/>
+    <arg name="cutoff" default="200"/>
+    <node name="pendulum" pkg="dcsc_setups" type="pendulum" output="screen">
+        <param name="rate" value="$(arg rate)"/>
+        <param name="cutoff" value="$(arg cutoff)"/>
+    </node>
 </launch>
