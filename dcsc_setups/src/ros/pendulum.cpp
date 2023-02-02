@@ -39,12 +39,6 @@ float cutoff_frequency = 200.0;
 float lowPassFilter(float velocity_old, float velocity, float dt, float RC)
 {
   float alpha = dt / (RC + dt);
-  if (velocity - velocity_old > 80) {
-    return velocity_old;
-  }
-  if (velocity - velocity_old < -80) {
-    return velocity_old;
-  }
   return alpha * velocity + (1 - alpha) * velocity_old;
 }
 
@@ -67,17 +61,31 @@ float getAngle(float voltage, float zero_voltage, float max_voltage, float angle
 float calculateVelocity(float angle, float angle_old, float time)
 {
   float velocity = (angle - angle_old) / time;
+  return velocity;
 }
 
 
 void calculateVelocities(float angle_beam, float angle_pendulum, float time)
 {
+  angle_beam = lowPassFilter(angle_beam_old, angle_beam, time, 1 / (2 * M_PI * cutoff_frequency));
+  angle_pendulum = lowPassFilter(angle_pendulum_old, angle_pendulum, time, 1 / (2 * M_PI * cutoff_frequency));
   velocity_beam = calculateVelocity(angle_beam, angle_beam_old, time);
   velocity_pendulum = calculateVelocity(angle_pendulum, angle_pendulum_old, time);
+  if (velocity_pendulum > 50.0) {
+    velocity_pendulum = velocity_pendulum_old;
+  }
+  if (velocity_pendulum < -50.0) {
+    velocity_pendulum = velocity_pendulum_old;
+  }
   angle_beam_old = angle_beam;
   angle_pendulum_old = angle_pendulum;
-  velocity_beam_filtered = lowPassFilter(velocity_beam_old, velocity_beam, time, 1 / (2 * M_PI * cutoff_frequency));
-  velocity_pendulum_filtered = lowPassFilter(velocity_pendulum_old, velocity_pendulum, time, 1 / (2 * M_PI * cutoff_frequency));
+  velocity_beam_filtered = velocity_beam;
+  velocity_pendulum_filtered = velocity_pendulum;
+  velocity_beam_old = velocity_beam;
+  velocity_pendulum_old = velocity_pendulum;
+
+  // velocity_beam_filtered = lowPassFilter(velocity_beam_old, velocity_beam, time, 1 / (2 * M_PI * cutoff_frequency));
+  // velocity_pendulum_filtered = lowPassFilter(velocity_pendulum_old, velocity_pendulum, time, 1 / (2 * M_PI * cutoff_frequency));
 }
 
 
@@ -134,13 +142,18 @@ void __read()
     ROS_ERROR("[pendulum] Reading failed with status [%s], I/O error [%s]", strerror(status), strerror(pendulum.read_error()));
     return;
   }
+  obs.header.stamp = ros::Time::now();
+  obs.relative_time = pendulum.sensors.relative_time;
+  obs.current = pendulum.sensors.current;  
+  obs.position0 = pendulum.sensors.position0;
+  obs.position1 = pendulum.sensors.position1;
   obs.voltage_beam = pendulum.sensors.voltage_beam;
   obs.voltage_pendulum = pendulum.sensors.voltage_pendulum;
   obs.digital_inputs = pendulum.sensors.digital_inputs;
   obs.current = pendulum.sensors.current;
   angle_beam = getAngle(obs.voltage_beam, zero_voltage_beam, max_voltage_beam, angle_beam_old, &shift_beam);
   angle_pendulum = getAngle(obs.voltage_pendulum, zero_voltage_pendulum, max_voltage_pendulum, angle_pendulum_old, &shift_pendulum);
-  calculateVelocities(angle_beam, angle_pendulum, 1 / rate);
+  calculateVelocities(angle_beam, angle_pendulum, obs.relative_time);
   obs.angle_beam = angle_beam;
   obs.angle_pendulum = angle_pendulum;
   obs.velocity_beam = velocity_beam_filtered;
@@ -165,10 +178,7 @@ int main(int argc, char **argv)
   n.getParam("rate", rate);
   n.getParam("cutoff", cutoff_frequency);
 
-  ros::Publisher pendulum_vel_raw = n.advertise<std_msgs::Float64>("pendulum_vel_raw", 1);
-  ros::Publisher pendulum_vel_filtered = n.advertise<std_msgs::Float64>("pendulum_vel_filtered", 1);
-  ros::Publisher beam_vel_raw = n.advertise<std_msgs::Float64>("beam_vel_raw", 1);
-  ros::Publisher beam_vel_filtered = n.advertise<std_msgs::Float64>("beam_vel_filtered", 1);
+  ros::Publisher obs_pub = n.advertise<dcsc_setups::PendulumSensors>("obs", 1);
   
   ros::Rate r(rate);
 
@@ -189,6 +199,7 @@ int main(int argc, char **argv)
       return 0;
     }
     initialized = init();
+    r.sleep();
   }
 
   // Calibration
@@ -248,18 +259,7 @@ int main(int argc, char **argv)
   while (ros::ok())
   {
     __read();
-    std_msgs::Float64 pendulum_vel_raw_msg;
-    std_msgs::Float64 pendulum_vel_filtered_msg;
-    std_msgs::Float64 beam_vel_raw_msg;
-    std_msgs::Float64 beam_vel_filtered_msg;
-    pendulum_vel_raw_msg.data = velocity_pendulum;
-    pendulum_vel_filtered_msg.data = velocity_pendulum_filtered;
-    beam_vel_raw_msg.data = velocity_beam;
-    beam_vel_filtered_msg.data = velocity_beam_filtered;
-    pendulum_vel_raw.publish(pendulum_vel_raw_msg);
-    pendulum_vel_filtered.publish(pendulum_vel_filtered_msg);
-    beam_vel_raw.publish(beam_vel_raw_msg);
-    beam_vel_filtered.publish(beam_vel_filtered_msg);
+    obs_pub.publish(obs);
     ros::spinOnce();
     r.sleep();
   }
