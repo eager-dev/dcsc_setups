@@ -78,3 +78,7 @@ add_dependencies(mops dcsc_setups_gencpp)
 add_executable(pendulum src/ros/pendulum.cpp src/usb_utils.cpp)
 target_link_libraries(pendulum ${catkin_LIBRARIES} libusb-1.0.so)
 add_dependencies(pendulum dcsc_setups_gencpp)
+
+add_executable(pendulum_old src/ros/pendulum_old.cpp src/usb_utils.cpp)
+target_link_libraries(pendulum_old ${catkin_LIBRARIES} libusb-1.0.so)
+add_dependencies(pendulum_old dcsc_setups_gencpp)
